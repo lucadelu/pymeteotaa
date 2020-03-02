@@ -8,16 +8,16 @@ Created on Wed Nov 15 09:55:37 2017
 import os
 import sys
 import requests
-from geojson import Point
-from datetime import date
+import geojson
 import tempfile
 from lxml import etree
-from observed_properties import ObsProperties
-from observed_properties import PROPERTIES
-from observed_properties import PROPERTIES_ST
-from observed_properties import PROPERTIES_PAT
-from observations import Observations_ST
-from observations import Observations
+from .observed_properties import ObsProperties
+from .observed_properties import PROPERTIES
+from .observed_properties import PROPERTIES_ST
+from .observed_properties import PROPERTIES_PAT
+from .observed_properties import istsos_sep
+from .observations import Observations_ST
+from .observations import Observations
 
 LANGUAGES = {'E': 'English', 'D': 'German', 'I': 'Italian', 'L': 'Ladin'}
 STATION_ST = {'MS': {'I': 'Stazione Meteo', 'DE': 'Wetterstation',
@@ -26,7 +26,7 @@ STATION_ST = {'MS': {'I': 'Stazione Meteo', 'DE': 'Wetterstation',
               'SF': {'I': 'Stazione Neve', 'DE': 'Schneemessfeld'},
               'PG': {'I': 'Stazione Idrometrica', 'DE': 'Pegelstation'}}
 DATA_ISTSOS = "urn:ogc:def:parameter:x-istsos:1.0:time:iso8601"
-
+PAT_STATIONS = "http://dati.meteotrentino.it/service.asmx/getListOfMeteoStations"
 
 class Station(object):
     """Class to define a station"""
@@ -142,7 +142,7 @@ class Station(object):
         return self._geom
 
     def set_geom(self):
-        self._geom = Point((self.get_long(), self.get_lat()))
+        self._geom = geojson.Point((self.get_long(), self.get_lat()))
 
     def del_geom(self):
         del self._geom
@@ -333,6 +333,29 @@ class Station_PAT(Station):
 
     enddate = property(get_end, set_end, del_end, "The station's end date")
 
+    def get_info(self):
+        """Get the info for the station"""
+        myreq = requests.get(PAT_STATIONS)
+        stazioni = etree.fromstring(myreq.content)
+        for stazione in stazioni:
+            infos = {}
+            for child in stazione.getchildren():
+                key = child.tag.replace('{http://www.meteotrentino.it/}','')
+                infos[key] = child.text
+            if infos['code'] == self._code:
+                self.startdate = infos['startdate']
+                self.enddate = infos['enddate']
+                self.latitude = float(infos['latitude'])
+                self.longitude = float(infos['longitude'])
+                self.altitude = float(infos['elevation'])
+                self.name_it = infos['name']
+                self.name_en = infos['shortname']
+                self.name_de = infos['name']
+                self.name_l = infos['name']
+                self.set_geom()
+                self.get_observed_props()
+                break
+
     def get_observed_props(self):
         """Get the observed property for this station"""
         url = self.url_data.format(st=self.get_code())
@@ -439,8 +462,7 @@ class MeteoStations:
 
     def get_stations_PAT(self):
         """Return a list of code and name of Trento Province stations"""
-        url = "http://dati.meteotrentino.it/service.asmx/getListOfMeteoStations"
-        myreq = requests.get(url)
+        myreq = requests.get(PAT_STATIONS)
         stazioni = etree.fromstring(myreq.content)
         for stazione in stazioni:
             st = Station_PAT()
@@ -488,35 +510,72 @@ class MeteoStations:
         for st in self.stations_list:
             print(st.get_code(), st.get_name(lang))
 
-    def stations_istsos_output(self, output=None, lang='E'):
+    def out_stations_istsos(self, output=None, lang='E', alls=True):
         """Write the station information to a CSV file to be imported with
         registercsv.py
 
         :param str output: output file to write otherwise it print to stdout
         :param str lang: the language name
+
+        This script register new procedures importing data from a csv file
+        containing the followings columns:
+
+        1.  name
+        2.  description
+        3.  keyword
+        4.  long name
+        5.  modelNumber
+        6.  manufacturer
+        7.  sensorType
+        8.  foi-epsg
+        9.  foi-coordinates (x,y,z comma separated for more then one)
+        10. foi-name
+        11. observed property (comma separated for more then one)
+        12. uom (comma separated for more then one)
+        13. begin position
+        14. end position
+        15. resolution
+        16. acquisition interval
+        17. quality index - lower bound
+        18. quality index - upper bound
+
+
+        separated with a semicolumn symbol ";"
         """
         if output:
             out = open(output,'w')
         else:
             out = sys.stdout
         for st in self.stations_list:
-            if len(st.observer_properties.items()) == 0:
+            if not alls and len(st.observer_properties.items()) == 0:
                 continue
             myfoi = "{na}_{co}".format(na=st.get_name(lang).replace(' ','_'),
                                        co=st.get_code())
-            infos = "{co};;;insitu-fixed-point;;{foi};{ep};{ex};{ey};" \
-                    "{ez}".format(co=st.get_code(), foi=myfoi, ep=self.epsg,
-                                  ex=st.longitude, ey=st.latitude,
-                                  ez=st.altitude)
-            obs = []
+            infos = "{co};{de};;;;;;{ep};{ex},{ey},{ez};" \
+                    "{foi}".format(co=st.get_code(), foi=myfoi, ep=self.epsg,
+                                   ex=st.longitude, ey=st.latitude,
+                                   de=myfoi.replace('_', ' '),
+                                   ez=st.altitude)
+            typ = []
+            cats = []
+            props = []
+            uoms = []
             for key, pro in st.observer_properties.items():
-                obs.append("{na},{de},{uom}".format(na=pro.name, de=pro.istsos,
-                                                    uom=pro.unit))
-            out.write("{inf};{ob}\n".format(inf=infos, ob='@'.join(obs)))
+                vals = istsos_sep(pro.istsos)
+                typ.append(vals[0])
+                cats.append(vals[1])
+                props.append(vals[2])
+                uoms.append(pro.unit)
+            out.write("{inf};{ty};{cs};{ps};{us}".format(inf=infos,
+                                                         ty=','.join(typ),
+                                                         cs=','.join(cats),
+                                                         ps=','.join(props),
+                                                         us=','.join(uoms)))
+            out.write(";;;;;-;-;\n")
         if output:
             out.close()
 
-    def stations_no_observations(self, output=None, lang='E'):
+    def out_stations(self, output=None, lang='E', alls=True):
         """Write the station information to a CSV file without observation
         properties
 
@@ -559,7 +618,7 @@ class MeteoStations:
             st.get_observations(props)
         return True
 
-    def observations_istsos_output(self, output=True, path=None):
+    def out_observations_istsos(self, output=True, path=None):
         """Write the observations to a CSV file to be imported with
 
         :param str output: write otherwise print to stdout
@@ -571,3 +630,37 @@ class MeteoStations:
                 continue
             st.obs_istsos_output(output, path)
         return True
+
+    def out_geojson(self, output=None, lang='E', onlyobs=False):
+        """Write the station in GeoJSON format to a file or stdout
+
+        :param str output: output file to write otherwise it print to stdout
+        :param str lang: the language name
+        """
+        if output:
+            out = open(output,'w')
+        else:
+            out = sys.stdout
+        feats = []
+        for st in self.stations_list:
+            if not onlyobs and len(st.observer_properties.items()) == 0:
+                continue
+            obs = []
+            for key, pro in st.observer_properties.items():
+                obs.append(key)
+            poi = geojson.Point((st.longitude, st.latitude))
+            if st.startdate:
+                dat = st.startdate
+            else:
+                dat = None
+            feat = geojson.Feature(geometry=poi,
+                                   properties={"code": st.get_code(),
+                                               "place": st.get_name(lang),
+                                               "properties": obs,
+                                               "start_date": dat})
+            feats.append(feat)
+
+        jsonfeats = geojson.FeatureCollection(feats)
+        out.write(geojson.dumps(jsonfeats, sort_keys=True))
+        if output:
+            out.close()
