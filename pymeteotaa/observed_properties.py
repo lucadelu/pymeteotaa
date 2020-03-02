@@ -49,6 +49,7 @@ PROPERTIES_ST = {
     'W': 'river-height',
     'Q': 'river-flowrate',
     'WT': 'river-temperature',
+#    'SSTF':
 }
 
 PROPERTIES_PAT = {
@@ -59,6 +60,15 @@ PROPERTIES_PAT = {
     'global_radiation_list': ['solar-radiation'],
     'snow_depth_list': ['snow-height']
 }
+
+
+def istsos_sep(val):
+    """Return values for the new registercsv.py script
+
+    :param str val: the istsos observation string
+    """
+    cats = val.split('1.0:')[1].split(':')
+    return cats[0], cats[1], ':'.join(cats[2:])
 
 
 class ObsProperties:
