@@ -10,6 +10,9 @@ import sys
 import requests
 import geojson
 import tempfile
+import datetime
+from astral import LocationInfo
+from astral.sun import sun
 from lxml import etree
 from .observed_properties import ObsProperties
 from .observed_properties import PROPERTIES
@@ -41,6 +44,8 @@ class Station(object):
         self._longitude = long
         self._latitude = lat
         self._geom = None
+        self._sunset = None
+        self._sunrise = None
         self.observer_properties = {}
         self.observations = {}
         self.last_observations = {}
@@ -148,6 +153,41 @@ class Station(object):
         del self._geom
 
     geom = property(get_geom, set_geom, del_geom, "GeoJSON geometry")
+
+    def get_sunset(self):
+        return self._sunset
+
+    def set_sunset(self):
+        loc = LocationInfo(name=self.name_it, region='Italy',
+                           timezone='Europe/Rome', latitude=self.latitude,
+                           longitude=self.longitude)
+        s = sun(loc.observer, date=datetime.date.today())
+        self._sunset = s["sunset"]
+
+    def del_sunset(self):
+        del self._sunset
+
+    sunset = property(get_sunset, set_sunset, del_sunset, "Sunset time")
+
+    def get_sunrise(self):
+        return self._sunrise
+
+    def set_sunrise(self):
+        loc = LocationInfo(name=self.name_it, region='Italy',
+                           timezone='Europe/Rome', latitude=self.latitude,
+                           longitude=self.longitude)
+        s = sun(loc.observer, date=datetime.date.today())
+        self._sunrise = s["sunrise"]
+
+    def del_sunrise(self):
+        del self._sunrise
+
+    sunrise = property(get_sunrise, set_sunrise, del_sunrise, "Sunrise time")
+
+    def set_sunset_sunrise(self):
+        """Set the sunset and sunrise"""
+        self.set_sunrise()
+        self.set_sunset()
 
     def _check_dates(self):
         """Check if dates are the same, and return the differences"""
